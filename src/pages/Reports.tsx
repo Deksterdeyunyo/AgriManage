@@ -1,0 +1,259 @@
+import React, { useState, useEffect } from "react";
+import { supabase, isSupabaseConfigured } from "../lib/supabase";
+import { FileText, Download, Printer } from "lucide-react";
+
+export default function Reports() {
+  const [logs, setLogs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const configured = isSupabaseConfigured();
+
+  useEffect(() => {
+    const fetchLogs = async () => {
+      if (!configured) {
+        setLoading(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("distribution_log")
+        .select(
+          `
+          *,
+          distribution_records (
+            distribution_date,
+            program,
+            recipients (full_name, barangay)
+          )
+        `,
+        )
+        .order("created_at", { ascending: false })
+        .limit(500);
+
+      if (!error && data) {
+        setLogs(data);
+      }
+      setLoading(false);
+    };
+
+    fetchLogs();
+  }, []);
+
+  const handleExportCSV = () => {
+    if (logs.length === 0) return;
+
+    const headers = [
+      "Date",
+      "Recipient",
+      "Barangay",
+      "Program",
+      "Item Type",
+      "Item Name",
+      "Quantity",
+      "Unit",
+    ];
+    const csvData = logs.map((log) => [
+      log.distribution_records?.distribution_date,
+      log.distribution_records?.recipients?.full_name,
+      log.distribution_records?.recipients?.barangay,
+      log.distribution_records?.program,
+      log.item_type,
+      log.item_name,
+      log.quantity_given,
+      log.unit,
+    ]);
+
+    const csvContent = [
+      headers.join(","),
+      ...csvData.map((row) => row.map((cell) => `"${cell || ""}"`).join(",")),
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute(
+      "download",
+      `distribution_report_${new Date().toISOString().split("T")[0]}.csv`,
+    );
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  // Group logs by barangay
+  const groupedLogs = logs.reduce((acc, log) => {
+    const brgy = log.distribution_records?.recipients?.barangay || 'Unknown Barangay';
+    if (!acc[brgy]) {
+      acc[brgy] = [];
+    }
+    acc[brgy].push(log);
+    return acc;
+  }, {} as Record<string, any[]>);
+
+  if (!configured) {
+    return (
+      <div className="p-8 bg-amber-50 rounded-xl border border-amber-200 text-amber-800">
+        <h2 className="text-xl font-bold mb-2">Supabase Not Configured</h2>
+        <p>
+          Please configure your Supabase URL and Anon Key to use this feature.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Screen View */}
+      <div className="print:hidden space-y-6">
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-bold text-gray-900">
+            Distribution Reports
+          </h1>
+          <div className="flex gap-3">
+            <button
+              onClick={handlePrint}
+              disabled={logs.length === 0}
+              className="flex items-center px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
+            >
+              <Printer className="h-5 w-5 mr-2" />
+              Print Report
+            </button>
+            <button
+              onClick={handleExportCSV}
+              disabled={logs.length === 0}
+              className="flex items-center px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors disabled:opacity-50"
+            >
+              <Download className="h-5 w-5 mr-2" />
+              Export CSV
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="p-4 border-b border-gray-200 bg-gray-50 flex items-center">
+            <FileText className="h-5 w-5 text-gray-500 mr-2" />
+            <h2 className="text-lg font-medium text-gray-800">
+              Recent Distributions
+            </h2>
+          </div>
+
+          {loading ? (
+            <div className="text-center py-8 text-gray-500">
+              Loading report data...
+            </div>
+          ) : logs.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              No distribution records found.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Date
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Recipient
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Program
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Item Type
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Item Name
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Quantity
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {logs.map((log) => (
+                    <tr key={log.log_id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {log.distribution_records?.distribution_date}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <div>
+                          {log.distribution_records?.recipients?.full_name}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {log.distribution_records?.recipients?.barangay}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {log.distribution_records?.program}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-emerald-100 text-emerald-800">
+                          {log.item_type}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {log.item_name}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {log.quantity_given} {log.unit}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Print View (Hidden on screen, visible on print) */}
+      <div className="hidden print:block print:w-full print:bg-white print:text-black">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold">Agricultural Distribution Report</h1>
+          <p className="text-gray-600">Generated on: {new Date().toLocaleDateString()}</p>
+        </div>
+
+        {Object.entries(groupedLogs).sort(([a], [b]) => a.localeCompare(b)).map(([barangay, barangayLogs]) => (
+          <div key={barangay} className="mb-12 page-break-inside-avoid">
+            <h2 className="text-xl font-bold bg-gray-100 p-2 border-b-2 border-gray-800 mb-4">
+              Barangay: {barangay}
+            </h2>
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-gray-400">
+                  <th className="py-2 pr-4 font-semibold">Date</th>
+                  <th className="py-2 pr-4 font-semibold">Recipient</th>
+                  <th className="py-2 pr-4 font-semibold">Program</th>
+                  <th className="py-2 pr-4 font-semibold">Item Category</th>
+                  <th className="py-2 pr-4 font-semibold">Item Name</th>
+                  <th className="py-2 font-semibold text-right">Quantity</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(barangayLogs as any[]).map((log) => (
+                  <tr key={log.log_id} className="border-b border-gray-200">
+                    <td className="py-2 pr-4 text-sm">{log.distribution_records?.distribution_date}</td>
+                    <td className="py-2 pr-4 text-sm font-medium">{log.distribution_records?.recipients?.full_name}</td>
+                    <td className="py-2 pr-4 text-sm">{log.distribution_records?.program || '-'}</td>
+                    <td className="py-2 pr-4 text-sm">{log.item_type}</td>
+                    <td className="py-2 pr-4 text-sm">{log.item_name}</td>
+                    <td className="py-2 text-sm text-right">{log.quantity_given} {log.unit}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-2 text-right text-sm font-bold">
+              Total distributions in {barangay}: {(barangayLogs as any[]).length}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
