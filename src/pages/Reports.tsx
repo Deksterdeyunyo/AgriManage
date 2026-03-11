@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from "react";
 import { supabase, isSupabaseConfigured } from "../lib/supabase";
-import { FileText, Download, Printer } from "lucide-react";
+import { FileText, Download, Printer, Filter } from "lucide-react";
 
 export default function Reports() {
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedBarangay, setSelectedBarangay] = useState<string>("All");
   const configured = isSupabaseConfigured();
 
   useEffect(() => {
@@ -36,10 +37,27 @@ export default function Reports() {
     };
 
     fetchLogs();
-  }, []);
+  }, [configured]);
+
+  const uniqueBarangays = Array.from(
+    new Set(
+      logs.map(
+        (log) => log.distribution_records?.recipients?.barangay || "Unknown Barangay"
+      )
+    )
+  ).sort();
+
+  const filteredLogs =
+    selectedBarangay === "All"
+      ? logs
+      : logs.filter(
+          (log) =>
+            (log.distribution_records?.recipients?.barangay || "Unknown Barangay") ===
+            selectedBarangay
+        );
 
   const handleExportCSV = () => {
-    if (logs.length === 0) return;
+    if (filteredLogs.length === 0) return;
 
     const headers = [
       "Date",
@@ -51,7 +69,7 @@ export default function Reports() {
       "Quantity",
       "Unit",
     ];
-    const csvData = logs.map((log) => [
+    const csvData = filteredLogs.map((log) => [
       log.distribution_records?.distribution_date,
       log.distribution_records?.recipients?.full_name,
       log.distribution_records?.recipients?.barangay,
@@ -73,7 +91,7 @@ export default function Reports() {
     link.setAttribute("href", url);
     link.setAttribute(
       "download",
-      `distribution_report_${new Date().toISOString().split("T")[0]}.csv`,
+      `distribution_report_${selectedBarangay.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.csv`,
     );
     link.style.visibility = "hidden";
     document.body.appendChild(link);
@@ -86,7 +104,7 @@ export default function Reports() {
   };
 
   // Group logs by barangay
-  const groupedLogs = logs.reduce((acc, log) => {
+  const groupedLogs = filteredLogs.reduce((acc, log) => {
     const brgy = log.distribution_records?.recipients?.barangay || 'Unknown Barangay';
     if (!acc[brgy]) {
       acc[brgy] = [];
@@ -110,23 +128,38 @@ export default function Reports() {
     <div className="space-y-6">
       {/* Screen View */}
       <div className="print:hidden space-y-6">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <h1 className="text-2xl font-bold text-gray-900">
             Distribution Reports
           </h1>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center bg-white border border-gray-300 rounded-lg px-3 py-2 shadow-sm">
+              <Filter className="h-4 w-4 text-gray-500 mr-2" />
+              <select
+                value={selectedBarangay}
+                onChange={(e) => setSelectedBarangay(e.target.value)}
+                className="bg-transparent border-none text-sm font-medium text-gray-700 focus:ring-0 p-0 cursor-pointer"
+              >
+                <option value="All">All Barangays</option>
+                {uniqueBarangays.map((brgy) => (
+                  <option key={brgy} value={brgy}>
+                    {brgy}
+                  </option>
+                ))}
+              </select>
+            </div>
             <button
               onClick={handlePrint}
-              disabled={logs.length === 0}
-              className="flex items-center px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
+              disabled={filteredLogs.length === 0}
+              className="flex items-center px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 shadow-sm"
             >
               <Printer className="h-5 w-5 mr-2" />
               Print Report
             </button>
             <button
               onClick={handleExportCSV}
-              disabled={logs.length === 0}
-              className="flex items-center px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors disabled:opacity-50"
+              disabled={filteredLogs.length === 0}
+              className="flex items-center px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors disabled:opacity-50 shadow-sm"
             >
               <Download className="h-5 w-5 mr-2" />
               Export CSV
@@ -135,20 +168,25 @@ export default function Reports() {
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="p-4 border-b border-gray-200 bg-gray-50 flex items-center">
-            <FileText className="h-5 w-5 text-gray-500 mr-2" />
-            <h2 className="text-lg font-medium text-gray-800">
-              Recent Distributions
-            </h2>
+          <div className="p-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+            <div className="flex items-center">
+              <FileText className="h-5 w-5 text-gray-500 mr-2" />
+              <h2 className="text-lg font-medium text-gray-800">
+                {selectedBarangay === "All" ? "All Distributions" : `Distributions in ${selectedBarangay}`}
+              </h2>
+            </div>
+            <span className="text-sm text-gray-500 font-medium">
+              {filteredLogs.length} records
+            </span>
           </div>
 
           {loading ? (
             <div className="text-center py-8 text-gray-500">
               Loading report data...
             </div>
-          ) : logs.length === 0 ? (
+          ) : filteredLogs.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
-              No distribution records found.
+              No distribution records found for the selected filter.
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -176,7 +214,7 @@ export default function Reports() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {logs.map((log) => (
+                  {filteredLogs.map((log) => (
                     <tr key={log.log_id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {log.distribution_records?.distribution_date}
@@ -217,6 +255,9 @@ export default function Reports() {
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold">Agricultural Distribution Report</h1>
           <p className="text-gray-600">Generated on: {new Date().toLocaleDateString()}</p>
+          {selectedBarangay !== "All" && (
+            <p className="text-lg font-semibold mt-2">Filtered by Barangay: {selectedBarangay}</p>
+          )}
         </div>
 
         {Object.entries(groupedLogs).sort(([a], [b]) => a.localeCompare(b)).map(([barangay, barangayLogs]) => (
