@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { supabase, isSupabaseConfigured } from "../lib/supabase";
-import { FileText, Download, Printer, Filter } from "lucide-react";
+import { FileText, Download, Printer, Filter, Edit, Trash2 } from "lucide-react";
+import Modal from "../components/Modal";
 
 export default function Reports() {
   const [logs, setLogs] = useState<any[]>([]);
@@ -8,34 +9,40 @@ export default function Reports() {
   const [selectedBarangay, setSelectedBarangay] = useState<string>("All");
   const configured = isSupabaseConfigured();
 
-  useEffect(() => {
-    const fetchLogs = async () => {
-      if (!configured) {
-        setLoading(false);
-        return;
-      }
+  // Edit state
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingLog, setEditingLog] = useState<any>(null);
+  const [editQuantity, setEditQuantity] = useState<number>(0);
 
-      const { data, error } = await supabase
-        .from("distribution_log")
-        .select(
-          `
-          *,
-          distribution_records (
-            distribution_date,
-            program,
-            recipients (full_name, barangay)
-          )
-        `,
-        )
-        .order("created_at", { ascending: false })
-        .limit(500);
-
-      if (!error && data) {
-        setLogs(data);
-      }
+  const fetchLogs = async () => {
+    if (!configured) {
       setLoading(false);
-    };
+      return;
+    }
+    setLoading(true);
 
+    const { data, error } = await supabase
+      .from("distribution_log")
+      .select(
+        `
+        *,
+        distribution_records (
+          distribution_date,
+          program,
+          recipients (full_name, barangay)
+        )
+      `,
+      )
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (!error && data) {
+      setLogs(data);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
     fetchLogs();
   }, [configured]);
 
@@ -101,6 +108,105 @@ export default function Reports() {
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleDelete = async (log: any) => {
+    if (!window.confirm("Are you sure you want to delete this record? This will restore the item quantity to inventory.")) return;
+    
+    setLoading(true);
+    try {
+      // 1. Delete the log
+      const { error: deleteError } = await supabase
+        .from("distribution_log")
+        .delete()
+        .eq("log_id", log.log_id);
+        
+      if (deleteError) throw deleteError;
+      
+      // 2. Restore inventory
+      const tableName = log.item_type === "Seed" ? "seeds_inventory" :
+                        log.item_type === "Fertilizer" ? "fertilizers_inventory" :
+                        log.item_type === "Vet" ? "vet_chemicals" : "pesticides_inventory";
+                        
+      const idField = log.item_type === "Seed" ? "seed_id" :
+                      log.item_type === "Fertilizer" ? "fertilizer_id" :
+                      log.item_type === "Vet" ? "vet_id" : "pesticide_id";
+                      
+      // Get current inventory
+      const { data: itemData } = await supabase
+        .from(tableName)
+        .select("quantity_available")
+        .eq(idField, log.item_id)
+        .single();
+        
+      if (itemData) {
+        await supabase
+          .from(tableName)
+          .update({ quantity_available: itemData.quantity_available + log.quantity_given })
+          .eq(idField, log.item_id);
+      }
+      
+      await fetchLogs();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to delete record.");
+      setLoading(false);
+    }
+  };
+
+  const openEditModal = (log: any) => {
+    setEditingLog(log);
+    setEditQuantity(log.quantity_given);
+    setIsEditModalOpen(true);
+  };
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLog) return;
+    
+    setLoading(true);
+    try {
+      const quantityDiff = editQuantity - editingLog.quantity_given;
+      
+      // Update log
+      const { error: updateError } = await supabase
+        .from("distribution_log")
+        .update({ quantity_given: editQuantity })
+        .eq("log_id", editingLog.log_id);
+        
+      if (updateError) throw updateError;
+      
+      // Update inventory
+      if (quantityDiff !== 0) {
+        const tableName = editingLog.item_type === "Seed" ? "seeds_inventory" :
+                          editingLog.item_type === "Fertilizer" ? "fertilizers_inventory" :
+                          editingLog.item_type === "Vet" ? "vet_chemicals" : "pesticides_inventory";
+                          
+        const idField = editingLog.item_type === "Seed" ? "seed_id" :
+                        editingLog.item_type === "Fertilizer" ? "fertilizer_id" :
+                        editingLog.item_type === "Vet" ? "vet_id" : "pesticide_id";
+                        
+        const { data: itemData } = await supabase
+          .from(tableName)
+          .select("quantity_available")
+          .eq(idField, editingLog.item_id)
+          .single();
+          
+        if (itemData) {
+          await supabase
+            .from(tableName)
+            .update({ quantity_available: itemData.quantity_available - quantityDiff })
+            .eq(idField, editingLog.item_id);
+        }
+      }
+      
+      await fetchLogs();
+      setIsEditModalOpen(false);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update record.");
+      setLoading(false);
+    }
   };
 
   // Group logs by barangay
@@ -211,6 +317,9 @@ export default function Reports() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Quantity
                     </th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -240,6 +349,22 @@ export default function Reports() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {log.quantity_given} {log.unit}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <button
+                          onClick={() => openEditModal(log)}
+                          className="text-blue-600 hover:text-blue-900 mr-3"
+                          title="Edit"
+                        >
+                          <Edit className="h-4 w-4 inline" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(log)}
+                          className="text-red-600 hover:text-red-900"
+                          title="Delete"
+                        >
+                          <Trash2 className="h-4 w-4 inline" />
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -295,6 +420,57 @@ export default function Reports() {
           </div>
         ))}
       </div>
+
+      {/* Edit Modal */}
+      <Modal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        title="Edit Distribution Record"
+      >
+        {editingLog && (
+          <form onSubmit={handleEditSubmit} className="space-y-4">
+            <div className="bg-gray-50 p-4 rounded-lg mb-4">
+              <p className="text-sm text-gray-600 mb-1"><strong>Recipient:</strong> {editingLog.distribution_records?.recipients?.full_name}</p>
+              <p className="text-sm text-gray-600 mb-1"><strong>Item:</strong> {editingLog.item_name} ({editingLog.item_type})</p>
+              <p className="text-sm text-gray-600"><strong>Date:</strong> {editingLog.distribution_records?.distribution_date}</p>
+            </div>
+            
+            <div className="flex flex-col">
+              <label className="text-sm font-medium text-gray-700 mb-1">
+                Quantity Given ({editingLog.unit})
+              </label>
+              <input
+                type="number"
+                min="1"
+                value={editQuantity}
+                onChange={(e) => setEditQuantity(Number(e.target.value))}
+                required
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Note: Changing this will automatically update the available inventory.
+              </p>
+            </div>
+
+            <div className="pt-4 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsEditModalOpen(false)}
+                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-4 py-2 text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {loading ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
     </div>
   );
 }
