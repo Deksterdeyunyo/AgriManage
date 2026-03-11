@@ -212,8 +212,8 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* Print View (Hidden on screen, visible on print) */}
-      <div className="hidden print:block print:w-full print:bg-white print:text-black">
+      {/* Hidden Print View (Only rendered during print) */}
+      <div className="hidden print:block w-full bg-white text-black">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold">Agricultural Distribution Report</h1>
           <p className="text-gray-600">Generated on: {new Date().toLocaleDateString()}</p>
