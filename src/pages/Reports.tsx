@@ -13,6 +13,11 @@ export default function Reports() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingLog, setEditingLog] = useState<any>(null);
   const [editQuantity, setEditQuantity] = useState<number>(0);
+  
+  // Delete state
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [logToDelete, setLogToDelete] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchLogs = async () => {
     if (!configured) {
@@ -110,46 +115,54 @@ export default function Reports() {
     window.print();
   };
 
-  const handleDelete = async (log: any) => {
-    if (!window.confirm("Are you sure you want to delete this record? This will restore the item quantity to inventory.")) return;
+  const handleDeleteClick = (log: any) => {
+    setLogToDelete(log);
+    setIsDeleteModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!logToDelete) return;
     
     setLoading(true);
+    setError(null);
     try {
       // 1. Delete the log
       const { error: deleteError } = await supabase
         .from("distribution_log")
         .delete()
-        .eq("log_id", log.log_id);
+        .eq("log_id", logToDelete.log_id);
         
       if (deleteError) throw deleteError;
       
       // 2. Restore inventory
-      const tableName = log.item_type === "Seed" ? "seeds_inventory" :
-                        log.item_type === "Fertilizer" ? "fertilizers_inventory" :
-                        log.item_type === "Vet" ? "vet_chemicals" : "pesticides_inventory";
+      const tableName = logToDelete.item_type === "Seed" ? "seeds_inventory" :
+                        logToDelete.item_type === "Fertilizer" ? "fertilizers_inventory" :
+                        logToDelete.item_type === "Vet" ? "vet_chemicals" : "pesticides_inventory";
                         
-      const idField = log.item_type === "Seed" ? "seed_id" :
-                      log.item_type === "Fertilizer" ? "fertilizer_id" :
-                      log.item_type === "Vet" ? "vet_id" : "pesticide_id";
+      const idField = logToDelete.item_type === "Seed" ? "seed_id" :
+                      logToDelete.item_type === "Fertilizer" ? "fertilizer_id" :
+                      logToDelete.item_type === "Vet" ? "vet_id" : "pesticide_id";
                       
       // Get current inventory
       const { data: itemData } = await supabase
         .from(tableName)
         .select("quantity_available")
-        .eq(idField, log.item_id)
+        .eq(idField, logToDelete.item_id)
         .single();
         
       if (itemData) {
         await supabase
           .from(tableName)
-          .update({ quantity_available: itemData.quantity_available + log.quantity_given })
-          .eq(idField, log.item_id);
+          .update({ quantity_available: itemData.quantity_available + logToDelete.quantity_given })
+          .eq(idField, logToDelete.item_id);
       }
       
       await fetchLogs();
-    } catch (err) {
+      setIsDeleteModalOpen(false);
+      setLogToDelete(null);
+    } catch (err: any) {
       console.error(err);
-      alert("Failed to delete record.");
+      setError(err.message || "Failed to delete record.");
       setLoading(false);
     }
   };
@@ -165,6 +178,7 @@ export default function Reports() {
     if (!editingLog) return;
     
     setLoading(true);
+    setError(null);
     try {
       const quantityDiff = editQuantity - editingLog.quantity_given;
       
@@ -202,9 +216,9 @@ export default function Reports() {
       
       await fetchLogs();
       setIsEditModalOpen(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert("Failed to update record.");
+      setError(err.message || "Failed to update record.");
       setLoading(false);
     }
   };
@@ -286,6 +300,12 @@ export default function Reports() {
             </span>
           </div>
 
+          {error && (
+            <div className="p-4 bg-red-50 text-red-700 border-b border-red-200">
+              {error}
+            </div>
+          )}
+
           {loading ? (
             <div className="text-center py-8 text-gray-500">
               Loading report data...
@@ -359,7 +379,7 @@ export default function Reports() {
                           <Edit className="h-4 w-4 inline" />
                         </button>
                         <button
-                          onClick={() => handleDelete(log)}
+                          onClick={() => handleDeleteClick(log)}
                           className="text-red-600 hover:text-red-900"
                           title="Delete"
                         >
@@ -470,6 +490,40 @@ export default function Reports() {
             </div>
           </form>
         )}
+      </Modal>
+      {/* Delete Modal */}
+      <Modal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        title="Confirm Delete"
+      >
+        <div className="space-y-4">
+          <p className="text-gray-700">
+            Are you sure you want to delete this distribution record?
+          </p>
+          {logToDelete && (
+            <div className="bg-red-50 p-4 rounded-lg text-sm text-red-800 border border-red-200">
+              <p><strong>Item:</strong> {logToDelete.item_name}</p>
+              <p><strong>Quantity:</strong> {logToDelete.quantity_given} {logToDelete.unit}</p>
+              <p className="mt-2 font-medium">This will restore the quantity back to your inventory.</p>
+            </div>
+          )}
+          <div className="pt-4 flex justify-end gap-3">
+            <button
+              onClick={() => setIsDeleteModalOpen(false)}
+              className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={confirmDelete}
+              disabled={loading}
+              className="px-4 py-2 text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50"
+            >
+              {loading ? "Deleting..." : "Yes, Delete Record"}
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );
